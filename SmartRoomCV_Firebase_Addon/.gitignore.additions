@@ -1,0 +1,4 @@
+# Firebase credentials and local configuration
+.env
+serviceAccountKey.json
+*-service-account*.json

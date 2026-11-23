@@ -1,0 +1,68 @@
+PATCH FOR YOUR EXISTING main.py (keep all existing YOLO/ByteTrack/Blynk code)
+
+1) Add this import with the other imports near the top:
+import time
+
+2) Add this configuration near DASHBOARD_API:
+FIREBASE_BRIDGE_API = "http://127.0.0.1:5001/api/state"
+FIREBASE_SEND_INTERVAL = 2.0
+last_firebase_send = 0.0
+firebase_warning_shown = False
+
+3) In send_dashboard_state(...), keep the existing payload and existing dashboard POST.
+   Add this block at the END of that function, before its final return, or replace the
+   existing function with the safe version below. It sends Firebase updates separately,
+   so a Firebase outage will not stop the camera or the existing dashboard.
+
+def send_firebase_state(payload):
+    global last_firebase_send, firebase_warning_shown
+    now = time.monotonic()
+    if now - last_firebase_send < FIREBASE_SEND_INTERVAL:
+        return True
+    try:
+        response = session.post(FIREBASE_BRIDGE_API, json=payload, timeout=0.7)
+        response.raise_for_status()
+        last_firebase_send = now
+        firebase_warning_shown = False
+        return True
+    except requests.RequestException as exc:
+        if not firebase_warning_shown:
+            print(
+                "Firebase bridge unavailable. Start firebase_bridge.py. "
+                f"Details: {exc}"
+            )
+            firebase_warning_shown = True
+        return False
+
+4) At the end of your existing send_dashboard_state function, after creating `payload`,
+   call:
+    send_firebase_state(payload)
+
+   IMPORTANT: Do not remove the existing Flask dashboard POST. Do not call this function
+   recursively. The function `send_firebase_state(payload)` must be a separate top-level
+   function (no indentation inside another function).
+
+5) Since the existing function currently returns early in its try/except, use this
+   recommended approach instead: keep send_dashboard_state exactly as it is, and in the
+   main loop immediately after the existing call to send_dashboard_state(...), add:
+       send_firebase_state({
+           "total_people": total_people,
+           "active_zones": active_zones,
+           "tracks": dashboard_tracks,
+           "zones": {
+               str(zone): {
+                   "people": int(zone_people[zone]),
+                   "light": bool(zone_status[zone]),
+                   "fan": bool(zone_status[zone])
+               }
+               for zone in range(1, 5)
+           },
+           "system": {
+               "camera": "Online",
+               "yolo": "Running",
+               "bytetrack": "Running",
+               "blynk": "Configured" if BLYNK_TOKEN and BLYNK_TOKEN != "PASTE_YOUR_NEW_BLYNK_TOKEN_HERE" else "Token required"
+           }
+       })
+
+This last option is the least invasive: it preserves the existing dashboard sender.
